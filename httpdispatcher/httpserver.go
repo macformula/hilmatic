@@ -22,8 +22,8 @@ type Message struct {
 }
 
 type StatusMessage struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Message string
+	Code    string
 }
 
 // message task values
@@ -158,30 +158,33 @@ func enableCors(w *http.ResponseWriter) {
 func (h *HttpServer) serveTest(w http.ResponseWriter, r *http.Request) {
 	enableCors(&w)
 	conn := h.createWS(w, r)
-	client := NewClient(conn)
+	client := NewClient(conn, h.l)
 	progressSub, resultsSub := h.SubscribeToFeeds(client.status, client.results)
 
 	go client.updateTests()
 
-	defer client.conn.Close()
+	//defer client.conn.Close()
 	defer progressSub.Unsubscribe()
 	defer resultsSub.Unsubscribe()
 
 	for {
 		msg, err := h.readWS(conn)
-		status := StatusMessage{Code: "200", Message: ""}
+		status := StatusMessage{Code: "200"}
 		if err != nil {
 			status.Code = "400"
 		}
 
 		switch msg.Task {
 		case StartTest:
+			h.l.Info("msg.Task: " + StartTest)
 			h.startClientTest(client, msg.Parameter)
 			status.Message = "Client Test Started"
 		case CancelTest:
+			h.l.Info("msg.Task: " + CancelTest)
 			h.cancelClientTest(client, msg.Parameter)
 			status.Message = "Client Test Cancelled"
 		case RecoverFromFatal:
+			h.l.Info("msg.Task: " + RecoverFromFatal)
 			h.recoverClientFromFatal(client)
 			status.Message = "Recovered From Fatal"
 		default:
@@ -189,9 +192,9 @@ func (h *HttpServer) serveTest(w http.ResponseWriter, r *http.Request) {
 			status.Message = "Invalid Message Received"
 		}
 
-		//err = conn.WriteMessage(status)
 		statusJSON, _ := json.Marshal(status)
-		conn.WriteMessage(websocket.TextMessage, statusJSON)
+		h.l.Info("sending statusJSON", zap.Any("statusJSON", statusJSON))
+		err = conn.WriteMessage(websocket.TextMessage, statusJSON)
 		if err != nil {
 			h.l.Error(errors.Wrap(err, "couldn't send back websocket message").Error())
 		}
@@ -201,7 +204,7 @@ func (h *HttpServer) serveTest(w http.ResponseWriter, r *http.Request) {
 func (h *HttpServer) serveStatus(w http.ResponseWriter, r *http.Request) {
 	enableCors(&w)
 	conn := h.createWS(w, r)
-	client := NewClient(conn)
+	client := NewClient(conn, h.l)
 	progressSub, resultsSub := h.SubscribeToFeeds(client.status, client.results)
 
 	defer client.conn.Close()
@@ -224,7 +227,7 @@ func (h *HttpServer) startClientTest(client *Client, parameter string) {
 	// If no parameter is provided, send the list of sequences to the client.
 	if parameter == "" {
 		sequencesJSON, _ := json.Marshal(h.sequences)
-		if err := client.conn.WriteMessage(websocket.TextMessage, sequencesJSON); err != nil {
+		if err = client.conn.WriteMessage(websocket.TextMessage, sequencesJSON); err != nil {
 			h.l.Error("Write error", zap.Error(err))
 		}
 		return
@@ -293,7 +296,10 @@ func (h *HttpServer) cancelClientTest(client *Client, parameter string) {
 
 func (h *HttpServer) recoverClientFromFatal(client *Client) {
 	h.recoverFromFatal <- orchestrator.RecoverFromFatalSignal{}
-	client.conn.WriteMessage(websocket.TextMessage, []byte{http.StatusOK})
+	//err := client.conn.WriteMessage(websocket.TextMessage, []byte{200})
+	//if err != nil {
+	//	return
+	//}
 }
 
 func (h *HttpServer) readWS(conn *websocket.Conn) (*Message, error) {
